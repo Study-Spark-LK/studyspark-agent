@@ -7,14 +7,18 @@ export type LearningGoal = 'exams' | 'curiosity' | 'career' | 'project';
 export type DifficultyPreference = 'beginner' | 'intermediate' | 'advanced';
 
 /**
- * Mirrors the `learning_profiles` row in Cloudflare D1 (owned by the Worker).
- * Retrieved via GET /v1/users/:userId on the Worker.
+ * Mirrors the `profiles` row in Cloudflare D1 (owned by the Worker).
+ * Retrieved via GET /v1/internal/users/:userId on the Worker.
  */
 export interface UserProfile {
   user_id: string;
   email?: string;
   full_name?: string;
-  /** VARK dimension scores — incremented over time, never reset */
+  /**
+   * VARK dimension scores — incremented over time, never reset.
+   * -1 means the dimension has not yet been analysed (profile is brand new).
+   * Agents must treat -1 as 0 and fall back to balanced personalisation.
+   */
   visual_score: number;
   auditory_score: number;
   reading_score: number;
@@ -29,8 +33,8 @@ export interface UserProfile {
 }
 
 /**
- * Small incremental update sent to Worker PATCH /v1/users/:userId/profile.
- * Deltas are in the range +1 to +3 per session. Scores are never decremented.
+ * Small incremental update sent to Worker PATCH /v1/internal/users/:userId/profile.
+ * Deltas are in the range +0 to +2 per session. Scores are never decremented.
  */
 export interface VarkDelta {
   visual?: number;

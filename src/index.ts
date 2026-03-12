@@ -16,10 +16,13 @@
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import { InMemoryRunner, isFinalResponse, stringifyContent } from '@google/adk';
+import swaggerUi from 'swagger-ui-express';
+import swaggerJsdoc from 'swagger-jsdoc';
 import { explanationAgent, storyModeAgent } from './agents/explanation.agent.js';
 import { contentProcessorAgent } from './agents/contentProcessor.agent.js';
 import { quizGenerationAgent, quizEvaluationAgent } from './agents/quiz.agent.js';
 import { profileUpdateAgent } from './agents/profileUpdate.agent.js';
+import { profileAnalysisAgent } from './agents/profileAnalysis.agent.js';
 import type { RawMaterial, ProcessedContent, ExplanationOutput, StoryOutput } from './types/content.types.js';
 import type { SubmittedAnswer, QuizQuestion } from './types/quiz.types.js';
 
@@ -52,6 +55,11 @@ const quizEvalRunner = new InMemoryRunner({
 
 const profileRunner = new InMemoryRunner({
   agent: profileUpdateAgent,
+  appName: 'studyspark',
+});
+
+const profileAnalysisRunner = new InMemoryRunner({
+  agent: profileAnalysisAgent,
   appName: 'studyspark',
 });
 
@@ -192,10 +200,239 @@ function parseAgentJson<T>(raw: string): T {
   }
 }
 
+// ── Swagger / OpenAPI ────────────────────────────────────────────────────────
+
+const swaggerSpec = swaggerJsdoc({
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'StudySpark ADK API',
+      version: '1.0.0',
+      description: 'Internal API for the StudySpark AI backend. All /internal/* routes require the X-Internal-Key header.',
+    },
+    servers: [{ url: `http://localhost:${process.env.PORT ?? 8080}` }],
+    components: {
+      securitySchemes: {
+        InternalKey: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-Internal-Key',
+        },
+      },
+      schemas: {
+        ProcessRequest: {
+          type: 'object',
+          required: ['userId', 'material'],
+          properties: {
+            userId: { type: 'string', example: 'user_2abc123' },
+            material: {
+              type: 'object',
+              description: 'Provide one of: file_url, text, imageBase64+mimeType, or pdfBase64.',
+              properties: {
+                file_url: { type: 'string', description: 'R2 public URL of a PDF or image file' },
+                text: { type: 'string', description: 'Plain text study content' },
+                imageBase64: { type: 'string', description: 'Base64-encoded image' },
+                mimeType: { type: 'string', example: 'image/png' },
+                pdfBase64: { type: 'string', description: 'Base64-encoded PDF' },
+              },
+            },
+          },
+        },
+        ProcessResponse: {
+          type: 'object',
+          properties: {
+            topic: { type: 'string' },
+            personalised_explanation: { type: 'string' },
+            tldr_summary: { type: 'string' },
+            key_points: { type: 'array', items: { type: 'string' } },
+            analogies: { type: 'array', items: { type: 'string' } },
+            difficulty: { type: 'string' },
+            story_mode_explanation: { type: 'string' },
+            concept_map: { type: 'object' },
+          },
+        },
+        QuizGenerateRequest: {
+          type: 'object',
+          required: ['userId', 'content'],
+          properties: {
+            userId: { type: 'string', example: 'user_2abc123' },
+            content: { type: 'string', description: 'Study material text to generate questions from' },
+            numQuestions: { type: 'integer', default: 10 },
+            difficulty: { type: 'string', enum: ['easy', 'medium', 'hard'], default: 'medium' },
+          },
+        },
+        QuizEvaluateRequest: {
+          type: 'object',
+          required: ['userId', 'questions', 'answers'],
+          properties: {
+            userId: { type: 'string', example: 'user_2abc123' },
+            questions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  question: { type: 'string' },
+                  options: { type: 'array', items: { type: 'string' } },
+                  correct_answer: { type: 'string' },
+                },
+              },
+            },
+            answers: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  questionId: { type: 'string' },
+                  selectedOption: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        ProfileAnalyzeRequest: {
+          type: 'object',
+          required: ['userId', 'profileId', 'qna'],
+          properties: {
+            userId: { type: 'string', example: 'user_2abc123' },
+            profileId: { type: 'string' },
+            name: { type: 'string', example: 'Alice' },
+            qna: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  question: { type: 'string' },
+                  answer: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        ProfileAnalyzeResponse: {
+          type: 'object',
+          properties: {
+            visualScore: { type: 'integer', minimum: 0, maximum: 100 },
+            auditoryScore: { type: 'integer', minimum: 0, maximum: 100 },
+            readingScore: { type: 'integer', minimum: 0, maximum: 100 },
+            kinestheticScore: { type: 'integer', minimum: 0, maximum: 100 },
+          },
+        },
+        Error: {
+          type: 'object',
+          properties: { error: { type: 'string' } },
+        },
+      },
+    },
+    security: [{ InternalKey: [] }],
+    paths: {
+      '/health': {
+        get: {
+          tags: ['System'],
+          summary: 'Health check',
+          security: [],
+          responses: {
+            '200': {
+              description: 'Server is healthy',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      status: { type: 'string', example: 'ok' },
+                      timestamp: { type: 'string', format: 'date-time' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/internal/process': {
+        post: {
+          tags: ['Content'],
+          summary: 'Process study material → personalised explanation + story mode',
+          description: 'Runs the full pipeline: content extraction → personalised explanation + TL;DR + story mode. Results are cached by the Worker.',
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ProcessRequest' } } },
+          },
+          responses: {
+            '200': {
+              description: 'Processed content',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ProcessResponse' } } },
+            },
+            '400': { description: 'Bad request', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Missing or invalid X-Internal-Key' },
+            '500': { description: 'Agent error', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/internal/quiz/generate': {
+        post: {
+          tags: ['Quiz'],
+          summary: 'Generate MCQ quiz questions',
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/QuizGenerateRequest' } } },
+          },
+          responses: {
+            '200': { description: 'Generated quiz questions', content: { 'application/json': { schema: { type: 'object' } } } },
+            '400': { description: 'Bad request', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Missing or invalid X-Internal-Key' },
+            '500': { description: 'Agent error', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/internal/quiz/evaluate': {
+        post: {
+          tags: ['Quiz'],
+          summary: 'Score quiz answers + update VARK profile',
+          description: 'Evaluates submitted answers, returns scores and VARK delta, and applies the delta to the user\'s learning profile.',
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/QuizEvaluateRequest' } } },
+          },
+          responses: {
+            '200': { description: 'Evaluation result with VARK delta', content: { 'application/json': { schema: { type: 'object' } } } },
+            '400': { description: 'Bad request', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Missing or invalid X-Internal-Key' },
+            '500': { description: 'Agent error', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/internal/profile/analyze': {
+        post: {
+          tags: ['Profile'],
+          summary: 'Analyse onboarding Q&A → initial VARK scores',
+          description: 'Reads the student\'s onboarding answers and returns initial VARK learning-style scores (0–100 each).',
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ProfileAnalyzeRequest' } } },
+          },
+          responses: {
+            '200': {
+              description: 'VARK scores',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/ProfileAnalyzeResponse' } } },
+            },
+            '400': { description: 'Bad request', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '401': { description: 'Missing or invalid X-Internal-Key' },
+            '500': { description: 'Agent error', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+    },
+  },
+  apis: [],
+});
+
 // ── Express app ─────────────────────────────────────────────────────────────
 
 const app = express();
 app.use(express.json({ limit: '20mb' }));
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.get('/docs.json', (_req, res) => res.json(swaggerSpec));
 
 // Internal auth middleware
 function requireInternalKey(req: Request, res: Response, next: NextFunction): void {
@@ -232,16 +469,18 @@ app.post('/internal/process', requireInternalKey, async (req: Request, res: Resp
     // Build message parts (text or multimodal)
     const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
 
-    if (material.file_url) {
-      parts.push(await fetchFileAsInlinePart(material.file_url));
-    } else if (material.text) {
-      parts.push({ text: material.text });
+    // Worker sends pdfBase64/imageBase64 directly — prefer inline data over URL fetching.
+    if (material.pdfBase64) {
+      parts.push({ inlineData: { mimeType: 'application/pdf', data: material.pdfBase64 } });
     } else if (material.imageBase64 && material.mimeType) {
       parts.push({ inlineData: { mimeType: material.mimeType, data: material.imageBase64 } });
-    } else if (material.pdfBase64) {
-      parts.push({ inlineData: { mimeType: 'application/pdf', data: material.pdfBase64 } });
+    } else if (material.text) {
+      parts.push({ text: material.text });
+    } else if (material.file_url) {
+      // Fallback: fetch from R2 URL (e.g. legacy or direct integrations)
+      parts.push(await fetchFileAsInlinePart(material.file_url));
     } else {
-      res.status(400).json({ error: 'material must contain file_url, text, imageBase64, or pdfBase64' });
+      res.status(400).json({ error: 'material must contain pdfBase64, imageBase64, text, or file_url' });
       return;
     }
 
@@ -346,13 +585,49 @@ app.post('/internal/quiz/evaluate', requireInternalKey, async (req: Request, res
   }
 });
 
+// ── POST /internal/profile/analyze ──────────────────────────────────────────
+
+interface ProfileAnalyzeRequest {
+  userId: string;
+  profileId: string;
+  name: string;
+  qna: Array<{ question: string; answer: string }>;
+}
+
+app.post('/internal/profile/analyze', async (req: Request, res: Response) => {
+  const { userId, profileId, name, qna } = req.body as ProfileAnalyzeRequest;
+
+  if (!userId || !profileId || !qna?.length) {
+    res.status(400).json({ error: 'userId, profileId, and qna are required' });
+    return;
+  }
+
+  try {
+    const qnaText = qna.map((item, i) => `Q${i + 1}: ${item.question}\nA: ${item.answer}`).join('\n\n');
+    const prompt = `Student name: ${name}\n\nOnboarding Q&A:\n${qnaText}`;
+    const raw = await runAgent(profileAnalysisRunner, userId, prompt);
+    const scores = parseAgentJson<{
+      visualScore: number;
+      auditoryScore: number;
+      readingScore: number;
+      kinestheticScore: number;
+    }>(raw);
+    res.json(scores);
+  } catch (err) {
+    console.error('[/internal/profile/analyze]', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
+  }
+});
+
 // ── Start server ─────────────────────────────────────────────────────────────
 
 const port = parseInt(process.env.PORT ?? '8080', 10);
 app.listen(port, () => {
   console.log(`StudySpark ADK server running on port ${port}`);
-  console.log(`  Health:  GET  http://localhost:${port}/health`);
-  console.log(`  Process: POST http://localhost:${port}/internal/process`);
-  console.log(`  Quiz:    POST http://localhost:${port}/internal/quiz/generate`);
-  console.log(`  Eval:    POST http://localhost:${port}/internal/quiz/evaluate`);
+  console.log(`  Docs:     GET  http://localhost:${port}/docs`);
+  console.log(`  Health:   GET  http://localhost:${port}/health`);
+  console.log(`  Process:  POST http://localhost:${port}/internal/process`);
+  console.log(`  Profile:  POST http://localhost:${port}/internal/profile/analyze`);
+  console.log(`  Quiz:     POST http://localhost:${port}/internal/quiz/generate`);
+  console.log(`  Eval:     POST http://localhost:${port}/internal/quiz/evaluate`);
 });

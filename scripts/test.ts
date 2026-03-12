@@ -2,7 +2,7 @@
  * Manual integration test for POST /internal/process.
  *
  * Prerequisites:
- *   1. Copy .env.example to .env and fill in INTERNAL_API_KEY.
+ *   1. Copy .env to .env and fill in INTERNAL_API_KEY.
  *   2. Start the server in another terminal: npm run serve
  *
  * Run:

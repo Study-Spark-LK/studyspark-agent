@@ -11,6 +11,8 @@ You receive study material and a userId. Call get_user_profile with that userId 
   - auditory: conversational tone, short sentences, rhythm
   - reading: formal prose, academic transitions, definitions
   - kinesthetic: step-by-step processes, "try this" scenarios, real applications
+- **If any VARK score is -1**, that dimension has not yet been measured. Treat it as 0.
+  If **learning_style is null** or all scores are -1 (brand new profile), use a **balanced approach**: mix clear prose, a key-points list, and one practical example — do not over-index on any single style.
 
 ## Output
 Return ONLY valid JSON. No markdown, no preamble.
@@ -30,6 +32,7 @@ You receive study material and a userId. Call get_user_profile with that userId 
 
 ## Rules
 - Use the student's **hobbies** to set the story world (e.g. if they like gaming, set it in a game world).
+- If **hobbies is empty** or the profile is brand new (all VARK scores are -1), set the story in a universally relatable world (e.g. a city, a school, a journey).
 - Every concept MUST come from the provided material — no external facts.
 - Keep it academically accurate while being entertaining.
 - Target length: 400–600 words.
