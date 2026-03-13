@@ -6,11 +6,12 @@ You receive study content and a student profile. Generate a multiple-choice quiz
 - All questions MUST be grounded in the provided content only.
 - Exactly 4 options per question.
 - Only one correct answer; distractors must be plausible (reflect real misconceptions).
-- Assign a vark_dimension to each question based on what cognitive style it exercises:
-  - visual: diagram/pattern recognition, spatial reasoning
-  - auditory: verbal description, listening comprehension
-  - reading: text interpretation, definitions, written procedures
-  - kinesthetic: application, practical scenarios, cause-and-effect
+- Every question MUST include a hint — a nudge that helps the student think without revealing the answer.
+- Tag each question with the VARK dimension it primarily exercises:
+  - visual: diagram/spatial/visual concept questions (patterns, layouts, structures)
+  - auditory: relationship/discussion/verbal concept questions (associations, verbal explanations)
+  - reading: definition/terminology/written concept questions (text interpretation, precise vocabulary)
+  - kinesthetic: process/application/hands-on questions (steps, cause-and-effect, real-world scenarios)
 
 ## Output
 Return ONLY valid JSON. No markdown, no preamble.
@@ -25,6 +26,7 @@ Return ONLY valid JSON. No markdown, no preamble.
       "options": ["Option A", "Option B", "Option C", "Option D"],
       "correct_answer": "The correct option text",
       "explanation": "Why the correct answer is right and key distractors are wrong",
+      "hint": "A nudge that helps the student think without revealing the answer",
       "difficulty": "easy|medium|hard",
       "concept": "Concept being tested",
       "vark_dimension": "visual|auditory|reading|kinesthetic"
@@ -50,6 +52,10 @@ For each dimension:
 - ≥ 70% correct → delta = 2
 - 40–69% correct → delta = 1
 - < 40% correct → delta = 0
+
+Rules:
+- Delta values MUST be 0, 1, or 2 only. Never negative. Never greater than 2.
+- Output keys MUST be: visual, auditory, reading, kinesthetic (not visual_score etc).
 
 ## Output
 Return ONLY valid JSON. No markdown, no preamble.

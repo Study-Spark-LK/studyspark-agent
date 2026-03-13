@@ -9,7 +9,8 @@
     "start": "node dist/src/index.js",
     "serve": "tsx src/index.ts",
     "dev": "adk web",
-    "adk:run": "adk run agent.ts"
+    "adk:run": "adk run agent.ts",
+    "test:local": "tsx scripts/test.ts"
   },
   "dependencies": {
     "@google/adk": "^0.3.0",

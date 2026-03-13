@@ -6,7 +6,7 @@
  *
  * Endpoints:
  *   GET  /health
- *   POST /internal/process          → personalised explanation + story mode (always both)
+ *   POST /internal/process          → personalised explanation + story mode + flashcards (all parallel)
  *   POST /internal/quiz/generate    → generate MCQ quiz
  *   POST /internal/quiz/evaluate    → score answers + VARK profile update
  *
@@ -20,10 +20,11 @@ import swaggerUi from 'swagger-ui-express';
 import swaggerJsdoc from 'swagger-jsdoc';
 import { explanationAgent, storyModeAgent } from './agents/explanation.agent.js';
 import { contentProcessorAgent } from './agents/contentProcessor.agent.js';
+import { flashcardAgent } from './agents/flashcard.agent.js';
 import { quizGenerationAgent, quizEvaluationAgent } from './agents/quiz.agent.js';
 import { profileUpdateAgent } from './agents/profileUpdate.agent.js';
 import { profileAnalysisAgent } from './agents/profileAnalysis.agent.js';
-import type { RawMaterial, ProcessedContent, ExplanationOutput, StoryOutput } from './types/content.types.js';
+import type { RawMaterial, ProcessedContent, ExplanationOutput, StoryOutput, Flashcard } from './types/content.types.js';
 import type { SubmittedAnswer, QuizQuestion } from './types/quiz.types.js';
 
 // ── Runners (one per agent, each has its own InMemorySessionService) ────────
@@ -62,6 +63,54 @@ const profileAnalysisRunner = new InMemoryRunner({
   agent: profileAnalysisAgent,
   appName: 'studyspark',
 });
+
+const flashcardRunner = new InMemoryRunner({
+  agent: flashcardAgent,
+  appName: 'studyspark',
+});
+
+// ── Error handling helpers ───────────────────────────────────────────────────
+
+const AGENT_TIMEOUT_MS = 30_000;
+
+/**
+ * Classifies an error into a structured HTTP error response.
+ * - 429 for Gemini quota / rate-limit errors
+ * - 504 for timeouts
+ * - 500 for everything else
+ */
+function classifyError(err: unknown): { status: number; code: string; message: string } {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  if (lower.includes('quota') || lower.includes('429') || lower.includes('resource_exhausted')) {
+    return {
+      status: 429,
+      code: 'GEMINI_QUOTA_EXCEEDED',
+      message: 'AI service quota exceeded. Please try again later.',
+    };
+  }
+  if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('deadline')) {
+    return {
+      status: 504,
+      code: 'GEMINI_TIMEOUT',
+      message: 'AI service timed out. Please try again.',
+    };
+  }
+  return { status: 500, code: 'AGENT_ERROR', message: msg };
+}
+
+/** Rejects with a timeout error if the promise does not resolve within `ms` milliseconds. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`timeout: request exceeded ${ms}ms`)),
+        ms,
+      ),
+    ),
+  ]);
+}
 
 // ── Helper: run an agent and return the final text response ─────────────────
 
@@ -194,8 +243,9 @@ function parseAgentJson<T>(raw: string): T {
   try {
     return JSON.parse(trimmed) as T;
   } catch {
+    console.error('[parseAgentJson] Failed to parse agent response:\n', raw);
     throw new Error(
-      `Agent returned no valid JSON.\nFirst 200 chars: ${trimmed.slice(0, 200)}`,
+      `Agent returned invalid JSON: ${trimmed.slice(0, 200)}`,
     );
   }
 }
@@ -248,7 +298,8 @@ const swaggerSpec = swaggerJsdoc({
             analogies: { type: 'array', items: { type: 'string' } },
             difficulty: { type: 'string' },
             story_mode_explanation: { type: 'string' },
-            concept_map: { type: 'object' },
+            concept_map: { type: 'array', items: { type: 'object', properties: { concept: { type: 'string' }, storyElement: { type: 'string' } } } },
+            flashcards: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' }, hint: { type: 'string' } } } },
           },
         },
         QuizGenerateRequest: {
@@ -297,6 +348,7 @@ const swaggerSpec = swaggerJsdoc({
             userId: { type: 'string', example: 'user_2abc123' },
             profileId: { type: 'string' },
             name: { type: 'string', example: 'Alice' },
+            hobbies: { type: 'array', items: { type: 'string' }, description: 'Student hobbies — used to bias initial VARK scores', example: ['Gaming', 'Music'] },
             qna: {
               type: 'array',
               items: {
@@ -455,13 +507,24 @@ app.get('/health', (_req, res) => {
 interface ProcessRequest {
   userId: string;
   material: RawMaterial;
+  /**
+   * Optional: caller-supplied profile data.
+   * When present, injected directly into the downstream prompt so agents
+   * do not need to call get_user_profile against the Worker.
+   * Used in local testing and when the Worker pre-fetches the profile.
+   */
+  profileData?: Record<string, unknown>;
 }
 
 app.post('/internal/process', requireInternalKey, async (req: Request, res: Response) => {
-  const { userId, material } = req.body as ProcessRequest;
+  const { userId, material, profileData } = req.body as ProcessRequest;
 
-  if (!userId || !material) {
-    res.status(400).json({ error: 'userId and material are required' });
+  if (!userId) {
+    res.status(400).json({ error: { code: 'MISSING_PROFILE', message: 'profileData or userId is required' } });
+    return;
+  }
+  if (!material) {
+    res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'material is required' } });
     return;
   }
 
@@ -478,30 +541,50 @@ app.post('/internal/process', requireInternalKey, async (req: Request, res: Resp
       parts.push({ text: material.text });
     } else if (material.file_url) {
       // Fallback: fetch from R2 URL (e.g. legacy or direct integrations)
-      parts.push(await fetchFileAsInlinePart(material.file_url));
+      parts.push(await withTimeout(fetchFileAsInlinePart(material.file_url), AGENT_TIMEOUT_MS));
     } else {
-      res.status(400).json({ error: 'material must contain pdfBase64, imageBase64, text, or file_url' });
+      res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'material must contain pdfBase64, imageBase64, text, or file_url' } });
       return;
     }
 
     // Step 1: content processor receives the raw parts (text / inlineData).
     const cpPrompt = `userId: ${userId}\n\nAnalyse the provided study material.`;
     parts.unshift({ text: cpPrompt });
-    const cpRaw = await runAgent(contentProcessorRunner, userId, cpPrompt, parts);
+    const cpRaw = await withTimeout(
+      runAgent(contentProcessorRunner, userId, cpPrompt, parts),
+      AGENT_TIMEOUT_MS,
+    );
     const processed = parseAgentJson<ProcessedContent>(cpRaw);
 
     // Step 2: downstream agents receive structured text only — no raw binary parts.
+    // If profileData is provided: embed it directly so agents skip the get_user_profile call.
+    // If absent: agents call get_user_profile tool against the Worker using userId.
+    const profileSection = profileData
+      ? `\n\nStudent profile (use this directly — do NOT call get_user_profile):\n${JSON.stringify(profileData, null, 2)}`
+      : '';
     const downstreamPrompt =
-      `userId: ${userId}\n\nProcessed study material:\n${JSON.stringify(processed, null, 2)}`;
+      `userId: ${userId}${profileSection}\n\nProcessed study material:\n${JSON.stringify(processed, null, 2)}`;
 
-    // Step 3: run both downstream agents in parallel.
-    const [explanationRaw, storyRaw] = await Promise.all([
-      runAgent(explanationRunner, userId, downstreamPrompt),
-      runAgent(storyRunner, userId, downstreamPrompt),
-    ]);
+    // Step 3: run all downstream agents in parallel with a shared timeout.
+    const [explanationRaw, storyRaw, flashcardsRaw] = await withTimeout(
+      Promise.all([
+        runAgent(explanationRunner, userId, downstreamPrompt),
+        runAgent(storyRunner, userId, downstreamPrompt),
+        runAgent(flashcardRunner, userId, downstreamPrompt),
+      ]),
+      AGENT_TIMEOUT_MS,
+    );
 
     const explanation = parseAgentJson<ExplanationOutput>(explanationRaw);
     const story = parseAgentJson<StoryOutput>(storyRaw);
+    const flashcardDeck = parseAgentJson<Flashcard[]>(flashcardsRaw);
+
+    // Map internal front/back shape to the contract shape the Worker expects
+    const flashcards = flashcardDeck.map((fc) => ({
+      question: fc.front,
+      answer: fc.back,
+      hint: fc.hint,
+    }));
 
     res.json({
       topic: explanation.topic,
@@ -512,10 +595,12 @@ app.post('/internal/process', requireInternalKey, async (req: Request, res: Resp
       difficulty: explanation.difficulty,
       story_mode_explanation: story.story,
       concept_map: story.conceptMap,
+      flashcards,
     });
   } catch (err) {
     console.error('[/internal/process]', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
+    const { status, code, message } = classifyError(err);
+    res.status(status).json({ error: { code, message } });
   }
 });
 
@@ -526,24 +611,30 @@ interface QuizGenerateRequest {
   content: string;
   numQuestions?: number;
   difficulty?: 'easy' | 'medium' | 'hard';
+  /**
+   * Optional quiz ID supplied by the Worker. The Worker handles caching —
+   * if present this ADK server simply generates fresh questions as normal.
+   */
+  quizId?: string;
 }
 
 app.post('/internal/quiz/generate', requireInternalKey, async (req: Request, res: Response) => {
   const { userId, content, numQuestions = 10, difficulty = 'medium' } = req.body as QuizGenerateRequest;
 
   if (!userId || !content) {
-    res.status(400).json({ error: 'userId and content are required' });
+    res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'userId and content are required' } });
     return;
   }
 
   try {
     const prompt = `Generate a ${difficulty} quiz with ${numQuestions} questions for userId: ${userId}.\n\nStudy material:\n${content}`;
-    const raw = await runAgent(quizGenRunner, userId, prompt);
+    const raw = await withTimeout(runAgent(quizGenRunner, userId, prompt), AGENT_TIMEOUT_MS);
     const result = parseAgentJson<Record<string, unknown>>(raw);
     res.json(result);
   } catch (err) {
     console.error('[/internal/quiz/generate]', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
+    const { status, code, message } = classifyError(err);
+    res.status(status).json({ error: { code, message } });
   }
 });
 
@@ -559,29 +650,32 @@ app.post('/internal/quiz/evaluate', requireInternalKey, async (req: Request, res
   const { userId, questions, answers } = req.body as QuizEvaluateRequest;
 
   if (!userId || !questions?.length || !answers?.length) {
-    res.status(400).json({ error: 'userId, questions, and answers are required' });
+    res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'userId, questions, and answers are required' } });
     return;
   }
 
   try {
     const prompt = `Evaluate the quiz for userId: ${userId}.\n\nQuestions (with correct answers):\n${JSON.stringify(questions, null, 2)}\n\nSubmitted answers:\n${JSON.stringify(answers, null, 2)}`;
-    const raw = await runAgent(quizEvalRunner, userId, prompt);
+    const raw = await withTimeout(runAgent(quizEvalRunner, userId, prompt), AGENT_TIMEOUT_MS);
     const evaluation = parseAgentJson<{
       varkDelta: { visual: number; auditory: number; reading: number; kinesthetic: number };
       [key: string]: unknown;
     }>(raw);
 
-    // Apply VARK delta to the user's profile
+    // Apply VARK delta to the user's profile (fire-and-forget with timeout)
     if (evaluation.varkDelta) {
       const { visual = 0, auditory = 0, reading = 0, kinesthetic = 0 } = evaluation.varkDelta;
       const deltaPrompt = `Apply VARK delta for userId: ${userId}. visual: ${visual}, auditory: ${auditory}, reading: ${reading}, kinesthetic: ${kinesthetic}`;
-      await runAgent(profileRunner, userId, deltaPrompt);
+      withTimeout(runAgent(profileRunner, userId, deltaPrompt), AGENT_TIMEOUT_MS).catch((err) =>
+        console.error('[/internal/quiz/evaluate] profile update failed:', err),
+      );
     }
 
     res.json(evaluation);
   } catch (err) {
     console.error('[/internal/quiz/evaluate]', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
+    const { status, code, message } = classifyError(err);
+    res.status(status).json({ error: { code, message } });
   }
 });
 
@@ -592,20 +686,22 @@ interface ProfileAnalyzeRequest {
   profileId: string;
   name: string;
   qna: Array<{ question: string; answer: string }>;
+  hobbies?: string[];
 }
 
-app.post('/internal/profile/analyze', async (req: Request, res: Response) => {
-  const { userId, profileId, name, qna } = req.body as ProfileAnalyzeRequest;
+app.post('/internal/profile/analyze', requireInternalKey, async (req: Request, res: Response) => {
+  const { userId, profileId, name, qna, hobbies = [] } = req.body as ProfileAnalyzeRequest;
 
   if (!userId || !profileId || !qna?.length) {
-    res.status(400).json({ error: 'userId, profileId, and qna are required' });
+    res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'userId, profileId, and qna are required' } });
     return;
   }
 
   try {
     const qnaText = qna.map((item, i) => `Q${i + 1}: ${item.question}\nA: ${item.answer}`).join('\n\n');
-    const prompt = `Student name: ${name}\n\nOnboarding Q&A:\n${qnaText}`;
-    const raw = await runAgent(profileAnalysisRunner, userId, prompt);
+    const hobbiesText = hobbies.length > 0 ? hobbies.join(', ') : 'none provided';
+    const prompt = `Student name: ${name}\n\nHobbies: ${hobbiesText}\n\nOnboarding Q&A:\n${qnaText}`;
+    const raw = await withTimeout(runAgent(profileAnalysisRunner, userId, prompt), AGENT_TIMEOUT_MS);
     const scores = parseAgentJson<{
       visualScore: number;
       auditoryScore: number;
@@ -615,7 +711,8 @@ app.post('/internal/profile/analyze', async (req: Request, res: Response) => {
     res.json(scores);
   } catch (err) {
     console.error('[/internal/profile/analyze]', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
+    const { status, code, message } = classifyError(err);
+    res.status(status).json({ error: { code, message } });
   }
 });
 

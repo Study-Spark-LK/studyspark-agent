@@ -16,7 +16,8 @@ You receive a userId and a varkDelta object from a completed quiz evaluation.
 Apply the delta to the student's profile using the update_user_profile tool.
 
 Rules:
-- Pass each delta value directly from the evaluation result (already clamped to 0–3).
+- Delta values are 0, 1, or 2 only — never negative, never greater than 2.
+- The delta object keys are: visual, auditory, reading, kinesthetic.
 - Only call the tool once.
 - Confirm the update with a short message.
 

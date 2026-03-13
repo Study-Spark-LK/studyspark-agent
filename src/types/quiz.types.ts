@@ -11,6 +11,8 @@ export interface QuizQuestion {
   /** The correct option text. Stripped before forwarding to Flutter. */
   correct_answer: string;
   explanation: string;
+  /** Optional hint shown if the student asks for help — does not reveal the answer */
+  hint: string;
   difficulty: QuizDifficulty;
   concept: string;
   /** VARK dimension this question exercises — used for profile delta calculation */

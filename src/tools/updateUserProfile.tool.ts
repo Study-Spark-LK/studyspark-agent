@@ -4,7 +4,7 @@ import { Type } from '@google/genai';
 export const updateUserProfileTool = new FunctionTool({
   name: 'update_user_profile',
   description:
-    'Sends incremental VARK score deltas to the Worker API after a quiz session. Deltas should be +1 to +3 per dimension based on quiz performance. Scores are never decremented.',
+    'Sends incremental VARK score deltas to the Worker API after a quiz session. Each delta is 0, 1, or 2. Scores are never decremented.',
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -14,19 +14,19 @@ export const updateUserProfileTool = new FunctionTool({
       },
       visual: {
         type: Type.NUMBER,
-        description: 'Points to add to visual_score (0–3).',
+        description: 'Points to add to visual_score (0, 1, or 2).',
       },
       auditory: {
         type: Type.NUMBER,
-        description: 'Points to add to auditory_score (0–3).',
+        description: 'Points to add to auditory_score (0, 1, or 2).',
       },
       reading: {
         type: Type.NUMBER,
-        description: 'Points to add to reading_score (0–3).',
+        description: 'Points to add to reading_score (0, 1, or 2).',
       },
       kinesthetic: {
         type: Type.NUMBER,
-        description: 'Points to add to kinesthetic_score (0–3).',
+        description: 'Points to add to kinesthetic_score (0, 1, or 2).',
       },
     },
     required: ['userId'],
@@ -47,13 +47,15 @@ export const updateUserProfileTool = new FunctionTool({
       return { success: false, message: 'WORKER_BASE_URL or INTERNAL_API_KEY is not configured.' };
     }
 
-    // Clamp each delta to the valid range
-    const clamp = (n: number) => Math.max(0, Math.min(3, Math.round(n)));
-    const delta = {
-      visual: clamp(visual),
-      auditory: clamp(auditory),
-      reading: clamp(reading),
-      kinesthetic: clamp(kinesthetic),
+    // Clamp each delta to 0–2, never negative
+    const clamp = (n: number) => Math.max(0, Math.min(2, Math.round(n)));
+
+    // Worker expects camelCase delta keys
+    const body = {
+      visualDelta:      clamp(visual),
+      auditoryDelta:    clamp(auditory),
+      readingDelta:     clamp(reading),
+      kinestheticDelta: clamp(kinesthetic),
     };
 
     try {
@@ -65,7 +67,7 @@ export const updateUserProfileTool = new FunctionTool({
             'X-Internal-Key': internalKey,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(delta),
+          body: JSON.stringify(body),
         },
       );
 
@@ -75,7 +77,7 @@ export const updateUserProfileTool = new FunctionTool({
 
       return {
         success: true,
-        message: `VARK delta applied: V+${delta.visual} A+${delta.auditory} R+${delta.reading} K+${delta.kinesthetic}`,
+        message: `VARK delta applied: V+${body.visualDelta} A+${body.auditoryDelta} R+${body.readingDelta} K+${body.kinestheticDelta}`,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

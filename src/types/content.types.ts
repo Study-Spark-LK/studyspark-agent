@@ -18,7 +18,8 @@ export interface Flashcard {
   id: string;
   front: string;
   back: string;
-  hint?: string;
+  /** Memory nudge without giving away the answer */
+  hint: string;
   tags: string[];
 }
 
@@ -47,6 +48,22 @@ export interface ExplanationOutput {
   /** Analogies tailored to the student's hobbies */
   analogies: string[];
   difficulty: DifficultyLevel;
+}
+
+/**
+ * Final assembled output shape for /internal/process.
+ * This is what the Worker caches in R2.
+ */
+export interface GeneratedContent {
+  topic: string;
+  personalised_explanation: string;
+  tldr_summary: string;
+  key_points: string[];
+  analogies: string[];
+  difficulty: DifficultyLevel;
+  story_mode_explanation: string;
+  concept_map: Array<{ concept: string; storyElement: string }>;
+  flashcards: Array<{ question: string; answer: string; hint: string }>;
 }
 
 /** Output shape of the story mode agent */

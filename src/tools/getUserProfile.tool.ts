@@ -35,7 +35,16 @@ export const getUserProfileTool = new FunctionTool({
         return { error: `Worker returned ${res.status}: ${await res.text()}` };
       }
 
-      return (await res.json()) as UserProfile;
+      const profile = (await res.json()) as UserProfile & { hobbies?: string | string[] };
+      // Worker may serialize hobbies as a JSON string in D1 — normalise to array
+      if (typeof profile.hobbies === 'string') {
+        try {
+          profile.hobbies = JSON.parse(profile.hobbies) as string[];
+        } catch {
+          profile.hobbies = [];
+        }
+      }
+      return profile as UserProfile;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { error: `Failed to fetch user profile: ${message}` };
