@@ -10,7 +10,8 @@
     "serve": "tsx src/index.ts",
     "dev": "adk web",
     "adk:run": "adk run agent.ts",
-    "test:local": "tsx scripts/test.ts"
+    "test:local": "tsx scripts/test.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@google/adk": "^0.3.0",
@@ -28,6 +29,7 @@
     "@types/swagger-ui-express": "^4.1.8",
     "@types/uuid": "^9.0.8",
     "tsx": "^4.19.0",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.0"
   }
 }

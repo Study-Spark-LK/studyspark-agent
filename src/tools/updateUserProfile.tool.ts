@@ -1,6 +1,9 @@
 import { FunctionTool } from '@google/adk';
 import { Type } from '@google/genai';
 
+/** Clamps a VARK delta to the allowed range: integer 0–2. */
+export const clamp = (n: number): number => Math.max(0, Math.min(2, Math.round(n)));
+
 export const updateUserProfileTool = new FunctionTool({
   name: 'update_user_profile',
   description:
@@ -47,8 +50,7 @@ export const updateUserProfileTool = new FunctionTool({
       return { success: false, message: 'WORKER_BASE_URL or INTERNAL_API_KEY is not configured.' };
     }
 
-    // Clamp each delta to 0–2, never negative
-    const clamp = (n: number) => Math.max(0, Math.min(2, Math.round(n)));
+    // Clamp each delta to 0–2, never negative (uses module-level clamp)
 
     // Worker expects camelCase delta keys
     const body = {
