@@ -172,7 +172,7 @@ const swaggerSpec = swaggerJsdoc({
       version: '1.0.0',
       description: 'Internal API for the StudySpark AI backend. All /internal/* routes require the X-Internal-Key header.',
     },
-    servers: [{ url: `http://localhost:${process.env.PORT ?? 8080}` }],
+    servers: [{ url: process.env.SERVER_URL ?? `http://localhost:${process.env.PORT ?? 8080}` }],
     components: {
       securitySchemes: {
         InternalKey: {

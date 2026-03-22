@@ -10,6 +10,7 @@
     "serve": "tsx src/index.ts",
     "dev": "adk web",
     "adk:run": "adk run agent.ts",
+    "adk:run-server": "npm run serve",
     "test:local": "tsx scripts/test.ts",
     "test": "vitest run"
   },
