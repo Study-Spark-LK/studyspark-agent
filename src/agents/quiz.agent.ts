@@ -9,7 +9,6 @@ import { QUIZ_GENERATION_PROMPT, QUIZ_EVALUATION_PROMPT } from '../prompts/quiz.
 export const quizGenerationAgent = new LlmAgent({
   name: 'quiz_generation_agent',
   model: 'gemini-2.5-flash',
-  generateContentConfig: { responseMimeType: 'application/json' },
   description:
     'Generates a multiple-choice quiz from the provided content. Returns full question objects including correct_answer and vark_dimension.',
   instruction: QUIZ_GENERATION_PROMPT,
@@ -23,7 +22,6 @@ export const quizGenerationAgent = new LlmAgent({
 export const quizEvaluationAgent = new LlmAgent({
   name: 'quiz_evaluation_agent',
   model: 'gemini-2.5-flash',
-  generateContentConfig: { responseMimeType: 'application/json' },
   description:
     'Scores submitted quiz answers, explains right/wrong answers, calculates VARK score deltas, and recommends next steps.',
   instruction: QUIZ_EVALUATION_PROMPT,

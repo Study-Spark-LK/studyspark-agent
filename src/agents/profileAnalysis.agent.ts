@@ -7,7 +7,6 @@ import { LlmAgent } from '@google/adk';
 export const profileAnalysisAgent = new LlmAgent({
   name: 'profile_analysis_agent',
   model: 'gemini-2.5-flash',
-  generateContentConfig: { responseMimeType: 'application/json' },
   description:
     'Reads onboarding Q&A responses and hobbies to determine the student\'s initial VARK learning-style scores.',
   instruction: `You are StudySpark's Profile Analysis Agent.

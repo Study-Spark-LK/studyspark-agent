@@ -8,7 +8,6 @@ import { FLASHCARD_PROMPT } from '../prompts/flashcard.prompt.js';
 export const flashcardAgent = new LlmAgent({
   name: 'flashcard_agent',
   model: 'gemini-2.5-flash',
-  generateContentConfig: { responseMimeType: 'application/json' },
   description:
     'Creates 8–15 study flashcards from the provided content. Returns a JSON array of flashcard objects.',
   instruction: FLASHCARD_PROMPT,

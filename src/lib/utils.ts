@@ -57,7 +57,8 @@ export function parseAgentJson<T>(raw: string): T {
   const trimmed = raw.trim();
 
   // 1. Strip a markdown fence and try parsing the content inside it.
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/i);
+  // Note: no $ anchor — Gemini sometimes adds trailing text after the closing fence.
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
   if (fenceMatch) {
     try {
       return JSON.parse(fenceMatch[1].trim()) as T;
