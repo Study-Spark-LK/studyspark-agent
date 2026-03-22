@@ -11,6 +11,7 @@ import { getUserProfileTool } from '../tools/getUserProfile.tool.js';
 export const explanationAgent = new LlmAgent({
   name: 'explanation_agent',
   model: 'gemini-2.5-flash',
+  generateContentConfig: { responseMimeType: 'application/json' },
   description:
     'Produces a VARK-personalised explanation with TL;DR, key points, and hobby-based analogies. Returns structured JSON.',
   instruction: EXPLANATION_PROMPT,
@@ -25,6 +26,7 @@ export const explanationAgent = new LlmAgent({
 export const storyModeAgent = new LlmAgent({
   name: 'story_mode_agent',
   model: 'gemini-2.5-flash',
+  generateContentConfig: { responseMimeType: 'application/json' },
   description:
     'Transforms study content into an engaging story personalised to the student\'s hobbies. Returns JSON with story prose and a concept map.',
   instruction: STORY_MODE_EXPLANATION_PROMPT,

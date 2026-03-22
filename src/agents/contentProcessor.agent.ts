@@ -12,6 +12,7 @@ import { LlmAgent } from '@google/adk';
 export const contentProcessorAgent = new LlmAgent({
   name: 'content_processor',
   model: 'gemini-2.5-flash',
+  generateContentConfig: { responseMimeType: 'application/json' },
   description:
     'Extracts key concepts, difficulty level, and a structured summary from raw study material (text, PDF, or image). Must run before explanation/flashcard/quiz agents.',
   instruction: `You are StudySpark's Content Processor.
